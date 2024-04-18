@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <link href="https://fonts.googleapis.com/css?family=Quicksand&display=swap" rel="stylesheet">
+    <meta charset="UTF-8">
+    <title>attribute extraction</title>
+    <style>
+      body {
+        font-family: 'Quicksand', Arial, sans-serif;
+        background-color: #313338;
+        color: #fff;
+        align-items: center;
+        align-content: center;
+        justify-content: center;
+        text-align: center;
+        padding: 20px 20px;
+      }
+      h1 {
+        font-size: 32px;
+        color: #fff;
+        margin: 0;
+        display: none;
+      }
+      h1 span {
+        font-size: 12px;
+        color: #8b8b8b;
+      }
+      p {
+        font-size: 16px;
+        color: #fff;
+        display: none;
+      }
+      a {
+        color: rgba(238, 238, 238, 0.829);
+      }
+      .vertical-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        width: 100%;
+      }
+      .horizontal-container {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        align-content: center;
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .loader {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background-color: #fff;
+        box-shadow: 32px 0 #fff, -32px 0 #fff;
+        position: relative;
+        animation: flash 0.5s ease-out infinite alternate;
+      }
+
+      @keyframes flash {
+        0% {
+          background-color: #FFF2;
+          box-shadow: 32px 0 #FFF2, -32px 0 #FFF;
+        }
+        50% {
+          background-color: #FFF;
+          box-shadow: 32px 0 #FFF2, -32px 0 #FFF2;
+        }
+        100% {
+          background-color: #FFF2;
+          box-shadow: 32px 0 #FFF, -32px 0 #FFF2;
+        }
+      }
+      
+      .display-field {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        margin-bottom: 10px;
+      }
+
+      .attribute-name {
+        width: 100%;
+        margin-left: 10px;
+        margin-right: 10px;
+      }
+
+      .progress-bar {
+        width: 100px;
+        height: 10px;
+        background-color: rgba(221, 221, 221, 1);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .progress-bar div {
+        height: 100%;
+        transition: width 0.6s ease-in-out;
+      }
+
+      .sentiment-negative {
+        background-color: #ff4747a6;
+      }
+      .sentiment-neutral {
+        background-color: #fcbe39b9;
+      }
+      .sentiment-positive {
+        background-color: #48fb6694;
+      }
+
+      .small-text{
+        font-size: 70%;
+      }
+
+      button {
+        font-family: 'Quicksand', sans-serif;
+        font-size: 20px;
+        color: #fff;
+        margin-top: 10px;
+        margin-bottom: 10px;
+        border: none;
+        border-radius: 15px;
+        padding: 10px 15px;
+        background-color: rgba(0, 140, 255, 0.7);
+        display: none;
+      }
+      button:hover {
+        background-color: rgba(0, 140, 255, 0.6);
+      }
+
+      #filter-select {
+        display: flex;
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+        background-color: #696969;
+        color: white;
+        padding: 5px;
+        border-radius: 20px;
+      }
+      #filter-select label {
+        margin-right: 10px;
+      }
+      .filter-option {
+        padding: 5px 15px;
+        border-radius: 15px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+      }
+      .filter-option.selected {
+        background-color: #333;
+        color: white;
+      }
+
+      #ratings {
+        display: flex;
+        flex-direction: row;
+        width: 500px;
+        justify-content: space-evenly;
+      }
+      #ratings-wrapper {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+      }
+      #ratings-col-wrapper {
+        width: 230px;
+        flex: 1;
+        margin-right: 10px;
+      }
+
+      #ratings-col-wrapper:last-child {
+        margin-right: 0;
+      }
+
+      body {
+        padding: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="vertical-container">
+      <h1 id="title">attribute extraction <div class="small-text" id="version"></div></h1>
+      <div class="msg-wrapper">
+        <p id="default-message">please navigate to the appropriate site.</p>
+      </div>
+      <div>
+        <p class="small-text" id="asin"></p>
+      </div>
+      <div>
+        <button id="start-button">start</button>
+      </div>
+      <div class="loader" style="display: none; margin: 15px"></div>
+    </div>
+
+    <div class="horizontal-container" id="filter-select-container" style="display: none; width: 50%;">
+      <div style="padding: 5px;"><b>filter by</b></div>
+      <div id="filter-select">
+        <div class="filter-option selected">all</div>
+        <div class="filter-option">verified</div>
+        <div class="filter-option">helpful</div>
+      </div>
+    </div>
+
+    <div class="vertical-container">
+      <div id="results-title" style="display: none;">
+        <br>
+        <div id="results-header" style="padding: 5px;"><b>overall results</b></div>
+      </div>
+      <div id="ratings" style="display: none;">
+        <div id="ratings-wrapper">
+          <div id="ratings-col-wrapper">
+            <div class="display-field">
+              <span class="attribute-name" style="text-align: right;">sentiment</span>
+              <div id="rating-sentiment" class="progress-bar"><div></div></div>
+            </div>
+            <div class="display-field">
+              <span class="attribute-name" style="text-align: right;">product quality</span>
+              <div id="rating-quality" class="progress-bar"><div></div></div>
+            </div>
+            <div class="display-field">
+              <span class="attribute-name" style="text-align: right;">user experience</span>
+              <div id="rating-experience" class="progress-bar"><div></div></div>
+            </div>
+            <div class="display-field">
+              <span class="attribute-name" style="text-align: right;">usability</span>
+              <div id="rating-usability" class="progress-bar"><div></div></div>
+            </div>
+            <div class="display-field">
+              <span class="attribute-name" style="text-align: right;">design</span>
+              <div id="rating-design" class="progress-bar"><div></div></div>
+            </div>
+          </div>
+          <div id="ratings-col-wrapper">
+            <div class="display-field">
+              <div id="rating-durability" class="progress-bar"><div></div></div>
+              <span class="attribute-name" style="text-align: left;">durability</span>
+            </div>
+            <div class="display-field">
+              <div id="rating-pricing" class="progress-bar"><div></div></div>
+              <span class="attribute-name" style="text-align: left;">pricing</span>
+            </div>
+            <div class="display-field">
+              <div id="rating-asAdvertised" class="progress-bar"><div></div></div>
+              <span class="attribute-name" style="text-align: left;">as advertised</span>
+            </div>
+            <div class="display-field">
+              <div id="rating-support" class="progress-bar"><div></div></div>
+              <span class="attribute-name" style="text-align: left;">customer support</span>
+            </div>
+            <div class="display-field">
+              <div id="rating-repurchaseIntent" class="progress-bar"><div></div></div>
+              <span class="attribute-name" style="text-align: left;">would buy again</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <br>
+      <div id="features-div" style="width: 500px; display: none;">
+        <br>
+        <div id="features-text"></div>
+      </div>
+    </div>
+
+    <script src="content.js"></script>
+  </body>
+</html>
