@@ -33,6 +33,8 @@ async function compileReviewEntries(reviews, doc){
       const verifiedPurchaseElement = review.querySelector('span[data-hook="avp-badge"], span[data-hook="avp-badge-linkless"]');
       const reviewBodyElement = review.querySelector('span[data-hook="review-body"]');
       const helpfulVotesText = review.querySelector('span[data-hook="helpful-vote-statement"]')?.textContent || "";
+      let content = reviewBodyElement ? reviewBodyElement.textContent.trim() : "no content";
+      content = content.replace(/The media could not be loaded\./g, '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
     
       reviewData.push({
         reviewID,
@@ -40,7 +42,7 @@ async function compileReviewEntries(reviews, doc){
         verifiedPurchase: !!verifiedPurchaseElement,
         hasImage: doc.querySelector(`div[id="${reviewID}_imageSection_main"]`) !== null,
         helpfulVotes: parseHelpfulVotes(helpfulVotesText),
-        content: `${reviewTitle} | ${reviewBodyElement ? reviewBodyElement.textContent.trim() : "no content"}`
+        content: `${reviewTitle} | ${content}`
       });
     }
   });
@@ -52,11 +54,11 @@ async function compileReviewEntries(reviews, doc){
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log("message received in background:", message);
   switch (message.action) {
-    
-    case "fetchPredictionsByASIN":{
+    case "fetchPredsByASIN":{
       const asin = message.data.asin;
-      const urlThroughProxy = `https://api.allorigins.win/raw?url=https://www.amazon.com/product-reviews/${asin}/ref=cm_cr_arp_d_viewopt_srt?sortBy=recent&pageNumber=1`;
-      
+      //corsanywhere requires manual access requests at https://cors-anywhere.herokuapp.com/corsdemo
+      const urlThroughProxy = `https://cors-anywhere.herokuapp.com/https://www.amazon.com/product-reviews/${asin}/ref=cm_cr_arp_d_viewopt_srt?sortBy=recent&pageNumber=1`;
+
       console.log(`<bg> fetching via proxy: "${urlThroughProxy}"`);
       fetch(urlThroughProxy)
         .then(response => response.text())
@@ -67,7 +69,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const captchaForm = doc.querySelector('form[action*="/errors/validateCaptcha"]');
           const captchaPrompt = doc.querySelector('div.a-box-inner h4');
           if (captchaForm && captchaPrompt && captchaPrompt.textContent.includes("Enter the characters you see below")) {
-            // we got blocked :(
+            // they're onto us :(
             console.error('<bg> error fetching predictions: CAPTCHA page detected.');
             sendResponse({status: "error", error: `captcha page detected!`});
           }
@@ -79,7 +81,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
           if(reviewData.length){
             browser.storage.local.set({reviews: reviewData});
             console.log(`<bg> sending json data:\n${JSON.stringify(reviewData)}`);
-            fetch('https://domain.com/predict', {
+            fetch('http://localhost:8080/predict', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify(reviewData.map(({ reviewID, content }) => ({ reviewID, content })))
@@ -89,7 +91,6 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
               console.log(`<bg> inferences:  ${JSON.stringify(predictions)}`);
               browser.storage.local.set({predictions: predictions})
                 .then(() => {
-                  console.log(`<bg> set stored preds to ${JSON.stringify(predictions)}.`);
                   browser.storage.local.set({asin: asin});
                   console.log(`<bg> set stored ASIN to "${asin}".`);
                   sendResponse({status: "success"});

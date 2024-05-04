@@ -1,4 +1,4 @@
-from torch.nn import MSELoss
+from collections import defaultdict
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -8,6 +8,7 @@ from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
 import json
 import matplotlib.pyplot as plt
+import numpy as np
 import os
 import time
 import torch
@@ -19,7 +20,7 @@ class DistilBertForMultiLabelSequenceClassification(DistilBertForSequenceClassif
     self.num_labels = 10
     self.classifier = torch.nn.Linear(config.dim, self.num_labels)
 
-  def forward(self, input_ids=None, attention_mask=None, head_mask=None, labels=None):
+  def forward(self, input_ids, attention_mask=None, head_mask=None, labels=None, attr_weights=None):
     outputs = self.distilbert(input_ids, attention_mask=attention_mask, head_mask=head_mask)
     pooled_output = outputs[0][:, 0]
     pooled_output = self.dropout(pooled_output)
@@ -27,8 +28,16 @@ class DistilBertForMultiLabelSequenceClassification(DistilBertForSequenceClassif
 
     loss = None
     if labels is not None:
-      loss_fct = MSELoss()
-      loss = loss_fct(logits, labels.float())
+      if attr_weights is None:
+        # default to equal weights if not provided
+        attr_weights = torch.ones(self.num_labels, device=labels.device)
+
+      # normalize weights
+      attr_weights = attr_weights / attr_weights.sum()
+      # compute weighted MSE loss
+      squared_errors = (logits - labels.float()) ** 2
+      weighted_squared_errors = attr_weights.view(1, -1).expand(squared_errors.size(0), -1) * squared_errors
+      loss = weighted_squared_errors.mean()
 
     return {'loss': loss, 'logits': logits}
 
@@ -71,12 +80,47 @@ def collate_fn(batch):
     'labels': labels
   }
 
+def calculate_class_weights(labels):
+  weight_calc_starttime = time.time()
+  label_counts = defaultdict(lambda: np.zeros(6))
+  sentiment_counts = np.zeros(5)  # separate array for sentiment counts
+
+  # iterate over the dataset to count occurrences of each label value
+  for entry in labels:
+    for key in entry:
+      if key == 'sentiment':
+        value = entry[key] - 1  # shift sentiment range from 1-5 to 0-4
+        sentiment_counts[value] += 1
+      elif key != 'id' and key != 'notableAttributes':  # exclude non-numeric attributes
+        value = entry[key]
+        label_counts[key][value] += 1
+
+  # calculate the weights inversely proportional to the log of label counts
+  class_weights = {}
+
+  # handle sentiment separately
+  sentiment_smoothed_log_counts = np.log(sentiment_counts + 1)
+  sentiment_inv_freq = 1.0 / sentiment_smoothed_log_counts
+  sentiment_weights = sentiment_inv_freq / sentiment_inv_freq.sum() * 5
+  class_weights['sentiment'] = sentiment_weights
+
+  for attr, counts in label_counts.items():
+    # apply smoothing and take log to dampen the effect of large counts
+    smoothed_log_counts = np.log(counts + 1)
+    inv_freq = 1.0 / smoothed_log_counts
+    weights = inv_freq / inv_freq.sum() * 6
+    class_weights[attr] = weights
+
+  print(f"class weights calculated in {time.time() - weight_calc_starttime}s: {class_weights}")
+  return class_weights
+
 print(f"environment:\n- PyTorch {torch.__version__}\n- CUDA {torch.version.cuda}\n- transformers {transformers.__version__}")
 
 # load the reviews and label data
-with open('reviews.json') as f:  
+with open('Amazon-Reviews-2023-cuttolabellength.json') as f:  
   reviews = json.load(f)
-with open('labels.json') as f:
+
+with open('labels-exact.json') as f:
   labels = json.load(f)
 
 print(f"loaded {len(reviews)} reviews and {len(labels)} labels")
@@ -134,10 +178,17 @@ assert torch.cuda.is_available(), f"CUDA is not available; check env"
 device = torch.device('cuda')
 print(f"using device: {device}")
 
+class_weights = calculate_class_weights(filtered_labels)
+class_weights = {attr: weights / weights.sum() for attr, weights in class_weights.items()}
+# convert class weights to tensors and move to the device
+class_weight_tensors = {}
+for attr, weights in class_weights.items():
+  class_weight_tensors[attr] = torch.tensor(weights, dtype=torch.float32).to(device)
+
 # create the multi-attribute model, optimizer, lr scheduler 
 model = DistilBertForMultiLabelSequenceClassification(config)
 model.to(device)
-optimizer = AdamW(model.parameters(), lr=2e-5)
+optimizer = AdamW(model.parameters(), lr=1e-5, weight_decay=1e-6)
 scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.7, patience=3, verbose=True)
 start_time = time.time()
 
@@ -158,7 +209,9 @@ for epoch in range(max_epochs):
     attention_mask = batch['attention_mask'].to(device)
     labels = batch['labels'].to(device) 
 
-    outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+    # extract attribute weights from class_weight_tensors
+    attr_weights_tensor = torch.tensor([class_weights[attr][0] for attr in attributes], device=device)
+    outputs = model(input_ids, attention_mask=attention_mask, labels=labels, attr_weights=attr_weights_tensor)
     loss = outputs['loss']
     logits = outputs['logits']
 
@@ -221,44 +274,43 @@ for epoch in range(max_epochs):
   print(f"> epoch {epoch + 1} <VAL> avg loss: {avg_val_loss:.4f} - avg mse: {avg_val_mses}")
 
 
-  if(epoch > 2):
-    model_path = f'{model_dir}/{start_time}/epoch{epoch+1}' 
-    model.save_pretrained(model_path)
-    print(f"saved fine-tuned token classification model checkpoint to '{model_path}'")
+  model_path = f'{model_dir}/{start_time}/epoch{epoch+1}' 
+  model.save_pretrained(model_path)
+  print(f"saved fine-tuned token classification model checkpoint to '{model_path}'")
 
-    epochs = range(1, epoch+2)
-    plt.figure(figsize=(15, 10))
-    # training metrics
-    fig, ((ax1, ax2, ax3)) = plt.subplots(3, 1, figsize=(16, 15))
-    num_executed_epochs = len(epoch_train_losses)
-    epochs = range(1, num_executed_epochs+1)
+  epochs = range(1, epoch+2)
+  plt.figure(figsize=(15, 10))
+  # training metrics
+  fig, ((ax1, ax2, ax3)) = plt.subplots(3, 1, figsize=(16, 15))
+  num_executed_epochs = len(epoch_train_losses)
+  epochs = range(1, num_executed_epochs+1)
 
-    # training loss graph
-    ax1.set_title('training, validation loss / epochs')
-    ax1.set_xlabel('epoch')
-    ax1.set_ylabel('loss')
-    ax1.plot(epochs, epoch_train_losses, label='training')
-    ax1.plot(epochs, epoch_val_losses, label='validation')
-    ax1.legend()
+  # training loss graph
+  ax1.set_title('training, validation loss / epochs')
+  ax1.set_xlabel('epoch')
+  ax1.set_ylabel('loss')
+  ax1.plot(epochs, epoch_train_losses, label='training')
+  ax1.plot(epochs, epoch_val_losses, label='validation')
+  ax1.legend()
 
-    # training MSE graph
-    ax2.set_title('training MSE / epochs')
-    ax2.set_xlabel('epoch')
-    ax2.set_ylabel('MSE')
-    for attr, mses in epoch_train_mses.items():
-      ax2.plot(epochs, mses, label=attr)
-    ax2.legend()
+  # training MSE graph
+  ax2.set_title('training MSE / epochs')
+  ax2.set_xlabel('epoch')
+  ax2.set_ylabel('MSE')
+  for attr, mses in epoch_train_mses.items():
+    ax2.plot(epochs, mses, label=attr)
+  ax2.legend()
 
-    # validation MSE graph
-    ax3.set_title('validation MSE / epochs')
-    ax3.set_xlabel('epoch')
-    ax3.set_ylabel('MSE')
-    for attr, mses in epoch_val_mses.items():
-      ax3.plot(epochs, mses, label=attr)
-    ax3.legend()
+  # validation MSE graph
+  ax3.set_title('validation MSE / epochs')
+  ax3.set_xlabel('epoch')
+  ax3.set_ylabel('MSE')
+  for attr, mses in epoch_val_mses.items():
+    ax3.plot(epochs, mses, label=attr)
+  ax3.legend()
 
-    plt.tight_layout()
-    plt.savefig(os.path.join(model_path, 'metrics_over_epochs.png'))
+  plt.tight_layout()
+  plt.savefig(os.path.join(model_path, 'metrics_over_epochs.png'))
 
   # update lr scheduler
   scheduler.step(avg_val_loss)

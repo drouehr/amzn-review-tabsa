@@ -1,10 +1,12 @@
 function sendMessageToBackground(action, data) {
   return new Promise((resolve, reject) => {
     browser.runtime.sendMessage({action, data}, response => {
-      if (response.status === "success") {
+      if (response && response.status === "success") {
         resolve(response.data);
-      } else {
+      } else if (response && response.status === "error") {
         reject(response.error);
+      } else {
+        reject(new Error("no response from background script."));
       }
     });
   });
@@ -80,6 +82,10 @@ function aggregatePredictions(combinedData, filterBy = 'all') {
     case 'helpful':
       filteredPredictions = combinedData.filter(entry => entry.hasImage || entry.helpfulVotes > 0);
       break;
+    default:
+      // handle nullish filter
+      filteredPredictions = combinedData;
+      break;
   }
 
   console.log(`proceeding with ${filteredPredictions.length} preds.`);
@@ -108,14 +114,14 @@ function aggregatePredictions(combinedData, filterBy = 'all') {
     return acc;
   }, {});
 
-  // Calculate the average for numeric attributes
+  // calculate the average for numeric attributes
   Object.keys(aggregatedPredictions).forEach(key => {
     if (typeof aggregatedPredictions[key] === 'object' && aggregatedPredictions[key].count > 0) {
       aggregatedPredictions[key] = aggregatedPredictions[key].sum / aggregatedPredictions[key].count;
     }
   });
 
-  // Aggregate notable attributes, averaging sentiments
+  // aggregate notable attributes, averaging sentiments
   if (aggregatedPredictions.notableAttributes) {
     const attributeMap = new Map();
     aggregatedPredictions.notableAttributes.forEach(item => {
@@ -285,7 +291,7 @@ document.getElementById("start-button").addEventListener("click", async () => {
   document.getElementById('start-button').style.display = 'none';
   document.querySelector('.loader').style.display = 'block';
 
-  sendMessageToBackground("fetchPredictionsByASIN", {asin: document.getElementById("asin").textContent.split(/ +/g).at(-1)})
+  sendMessageToBackground("fetchPredsByASIN", {asin: document.getElementById("asin").textContent.split(/ +/g).at(-1)})
     .then(async () => {
       Promise.all([
         sendMessageToBackground("getData", {key: "predictions"}),
